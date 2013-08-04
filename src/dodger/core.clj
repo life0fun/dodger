@@ -14,35 +14,38 @@
 
 ; create index
 (defn create-index [args]
+  "create index for data, first arg is idxname, second arg is data file"
   (let [now (clj-time.local/local-now)
         fns (map (fn [nm] (ns-resolve 'clj-time.core (symbol nm))) ["year" "month" "day"])
         datm (map (fn [f] (format "%02d" (f now))) fns)   ; clojure.core/format string
         nowidx (str "logstash-" (clojure.string/join "." datm))
         fmt-now (clj-time.format/unparse (clj-time.format/formatter "yyyy.MM.dd") now)
         nxt-week (clj-time/plus now (clj-time/weeks 1))
-        idxname (or args nowidx)
-        datfile (first args)]
-    (prn "create-index..." idxname fmt-now nowidx nxt-week)
-    (es/create-index idxname datfile)))
+        idxname (first args)
+        datfile (second args)]
+    (prn "create index with data..." idxname datfile)
+    (es/create-index-with-data idxname datfile)))
 
 
 ; generate feature 
 (defn gen-feature [args]
+  "generate feature based on facet query result"
   (let [now (clj-time.local/local-now)
         fns (map (fn [nm] (ns-resolve 'clj-time.core (symbol nm))) ["year" "month" "day"])
         datm (map (fn [f] (format "%02d" (f now))) fns)   ; clojure.core/format string
         nowidx (str "logstash-" (clojure.string/join "." datm))
         fmt-now (clj-time.format/unparse (clj-time.format/formatter "yyyy.MM.dd") now)
         nxt-week (clj-time/plus now (clj-time/weeks 1))
-        idxname (or args nowidx)
-        datfile (first args)
-        time (second args)]
-    (prn "generate feature..." idxname time)
-    (es/gen-feature idxname time)))
+        idxname (first args)
+        time (second args)
+        backhours (last args)]
+    (prn "generate feature..." idxname time backhours)
+    (es/gen-feature idxname time backhours)))
 
 
 ; generate feature 
 (defn train [args]
+  "train vw with the feature data"
   (let [now (clj-time.local/local-now)
         fns (map (fn [nm] (ns-resolve 'clj-time.core (symbol nm))) ["year" "month" "day"])
         datm (map (fn [f] (format "%02d" (f now))) fns)   ; clojure.core/format string
@@ -52,11 +55,11 @@
         idxname (or args nowidx)
         datfile (first args)
         modelfile (second args)]
-    (prn "train..." datfile modelfile)
-    (es/train datfile modelfile)))
+    (prn "train..." datfile modelfile)))
 
 ; generate feature 
 (defn predict [args]
+  "predict traffic with trained model"
   (let [now (clj-time.local/local-now)
         fns (map (fn [nm] (ns-resolve 'clj-time.core (symbol nm))) ["year" "month" "day"])
         datm (map (fn [f] (format "%02d" (f now))) fns)   ; clojure.core/format string
@@ -66,8 +69,7 @@
         idxname (or args nowidx)
         datfile (first args)
         modelfile (second args)]
-    (prn "predict..." datfile)
-    (es/predict datfile)))
+    (prn "predict..." datfile)))
 
 
 (defn search [args]
@@ -80,7 +82,7 @@
         idxname (or args nowidx)
         time (first args)]
     (prn "search by..." time)
-    (es/search time)))
+    (es/query time)))
 
 (defn plot [args]
   ; args ary is ["plot" "/tmp/x"]
@@ -96,4 +98,4 @@
     "train" (train (rest args))
     "predict" (predict (rest args))
     "plot" (plot (rest args))
-    (search-data args)))    ; default
+    (search args)))    ; default

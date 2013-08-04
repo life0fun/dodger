@@ -1,22 +1,21 @@
-;;
-;; query elastic search engine
-;;
-
-(ns logquery.elastic.es
+(ns dodger.elastic.es
   (:require [clojure.string :as str])
   (:require [clojure.java.jdbc :as sql])
   (:import [java.io FileReader]
            [java.util Map Map$Entry List ArrayList Collection Iterator HashMap])
   (:require [clj-redis.client :as redis])    ; bring in redis namespace
-  (:require [clojure.data.json :as json])
+  (:require [clojure.data.json :as json]
+            [clojure.java.io :only [reader] :refer [reader]])
   (:require [clojurewerkz.elastisch.rest          :as esr]
             [clojurewerkz.elastisch.rest.document :as esd]
+            [clojurewerkz.elastisch.rest.index    :as esi]
             [clojurewerkz.elastisch.query         :as q]
             [clojurewerkz.elastisch.rest.response :as esrsp]
             [clojure.pprint :as pp])
   (:require [clj-time.core :as clj-time :exclude [extend]]
-            [clj-time.format])
-  (:require [logquery.incanter.plot :refer :all]))
+            [clj-time.format :refer [parse unparse formatter]]
+            [clj-time.coerce :refer [to-long from-long]])
+  (:require [dodger.incanter.plot :refer :all]))
 ;
 ; http://www.slideshare.net/clintongormley/terms-of-endearment-the-elasticsearch-query-dsl-explained
 ; curl -XGET 'http://cte-db3:9200/logstash-2013.05.22/_search?q=@type=finder_core_api
@@ -45,6 +44,9 @@
 ; globals
 (def ^:dynamic *es-conn*)
 
+(def elasticserver "localhost")
+(def elasticport 9200)
+
 (def time-range 1)    ; from now, how far back
 
 ; forward declaration
@@ -68,98 +70,121 @@
        (do ~@exprs))))
 
 
+; mapping types can be thought of as tables in a db(index)
+; mapping types defines how a field is analyzed, indexed so can be searched.
+(defn create-dodger-mapping-types 
+  "ret a mapping type for dodger data with timestamp and value fields"
+  [mapping-name]
+  (let [name mapping-name
+        schema (hash-map :value {:type "integer" :store "yes"}
+                         :timestamp {:type "date" :format "MM/dd/yyyy HH:mm"})]
+    (hash-map name (hash-map :properties schema))))
+
+(defn create-dodger-doc
+  "create a document for dodger mapping, :value and :timestamp fields"
+  [value timestamp]
+  (hash-map :value value :timestamp timestamp))
+
 ; document query takes index name, mapping name and query (as a Clojure map)
 ; curl -s http://127.0.0.1:9200/_status?pretty=true | grep logstash
-; curl -XGET 'http://cte-db3:9200/logstash-2013.05.22/_search?q=@type=finder_core_api
-(defn test-query-with [tag]
-  (with-esconn ["cte-db3" 9200]
-    (let [res (esd/search "logstash-2013.05.22" :query (q/term :message "timeInvoked"))
-          n    (esrsp/total-hits res)
-          hits (esrsp/hits-from res)]
-      (println (format "Total hits: %d" n))
-      (pp/pprint hits))))
+(defn create-index
+  "create index with mappings"
+  [idxname mappings]
+  (if (esi/exists? idxname)
+    (esi/delete idxname)
+    ;(prn (esi/get-settings idxname))
+    (esi/create idxname :mappings mappings)))
 
 
-(defn test-query [idxname query process-fn]
-  ; if idxname is unknown, we can use search-all-indexes-and-types.
-  ; query range to be 
-  (connect "cte-db3" 9200)
-  ;(connect "localhost" 9200)           
-  (let [res (esd/search-all-indexes-and-types ;esd/search-all-types idxname ;"logstash-2013.05.22"
-              :size 100
-              :query query
-              :sort {"@timestamp" {"order" "desc"}})
-         n (esrsp/total-hits res)
-         hits (esrsp/hits-from res)
-         f (esrsp/facets-from res)]
-    (println (format "Total hits: %d" n))
-    (process-fn hits)))
+(defn populate-dodger-data
+  "read data file line by line, and create document in es with fields"
+  [idxname mappings datfile]
+  ; transform file as line seq using clojure.java.io/reader
+  (prn "populating from datfile " datfile)
+  (with-open [rdr (reader datfile)]
+    (doseq [l (line-seq rdr)]
+      (let [[ts val] (clojure.string/split l #",")]
+        (prn ts val)
+        (esd/create idxname mappings (create-dodger-doc val ts))
+        val))))
 
 
-(defn test-stats-query [idxname]
-  (test-query idxname (stats-query) process-stats-hits))
-
-
-(defn test-trigger-query [idxname]
-  ;(test-query idxname (trigger-task-query) prn))
-  (test-query idxname (text-query) prn))
-
-
-(defn text-query []
-  (q/text "text" "elapsed"))
-
-
-(defn stats-query []
-  ; form query params for Stats query. time range from yesterday to today.
-  ; logstash column/field begin with @
+(defn query-string-keyword [field keyword]
+  "ret a query map with filtered clause"
   (let [now (clj-time/now) 
-        pre (clj-time/minus now (clj-time/days time-range))  ; from now back 2 days
+        ;pre (clj-time/minus now (clj-time/days time-range))  ; from now back 2 days
+        pre (clj-time/minus now (clj-time/hours 20))  ; from now back 1 days
         nowfmt (clj-time.format/unparse (clj-time.format/formatters :date-time) now)
         prefmt (clj-time.format/unparse (clj-time.format/formatters :date-time) pre)]
+    ; use filtered query
     (q/filtered
-      :query 
+      :query
         (q/query-string 
-          :default_field "@message"
-          :query "@message:Stats AND @type:finder_core_application")
+          :default_field field
+          ;:query "@message:EmailAlertDigestEventHandlerStats AND @type:finder_core_application")
+          :query (str "value" keyword))
       :filter 
-        {:range {"@timestamp" {:from prefmt     ;"2013-05-29T00:44:42"
+        {:range {"timestamp" {:from prefmt   ;"2013-05-29T00:44:42"
                                :to nowfmt }}})))
 
-
-(defn trigger-task-query []
-  ; form query params to search elapsed keyword in log message.
-  (q/filtered :query
-    (q/query-string
-      :default_field "@message"
-      :query "@message:elapsed AND @type:finder_core_accounting_triggeredTask")))
-
-
-; hits contains log message
-(defn process-stats-hits [hits]
-  ; query result contains hits map, extract log message from hits map
-  (let [msgs (map (fn [row] (-> row :_source (get (keyword "@message")))) hits)
-        stats (map process-stats-record msgs)
-        test-result (map format-stats stats)] ; for each msg record, extract timestamp and stats field
-    (view-stats-data test-result)))    ; map format stat fn to each stats in each record
+; ret a map that specifies date histogram query
+(defn date-hist-facet [name keyfield valfield interval]
+  "form a date histogram facets map, like {name : {date_histogram : {field: f}}}"
+  (let [qmap (hash-map "field" keyfield "interval" interval)]
+    (if (nil? valfield)
+      (hash-map name (hash-map "date_histogram" qmap))
+      (hash-map name (hash-map "date_histogram" (assoc qmap "value_field" valfield))))))
 
 
-(defn process-stats-record [record]
-  ; for each log record, ret the first and 5th fields (timestamp and stats)
-  (let [fields (clojure.string/split record #"\|")]  ; log delimiter is |
-    ;(prn fields (count fields))
-    (map #(nth fields %) [1 5])))
+; construct filtered query for time ranged query
+(defn filtered-time-range
+  "filtered query with filter range on timestamp field from cur point back to n hours"
+  [field time-str back-hours]
+  (let [to (parse (formatter "MM/dd/yyyy HH:mm") time-str)
+        from (clj-time/minus to (clj-time/hours (read-string back-hours)))
+        from-str (unparse (formatter "MM/dd/yyyy HH:mm") from)]
+    ;(q/range field :from from-str :to time-str)))
+    (q/range field :from (to-long from) :to (to-long to))))
 
-(defn format-stats [stats] 
-  ; stats is ("Fri May 24.." "Stats = CNI{hs=10, time=20}")
-  ; convert key=val to kv map using regexp. first, capture inside {}, match key=val.
-  (let [ts (clojure.string/join " " (reverse (map #(first (clojure.string/split % #"\.")) (take 3 (rest (clojure.string/split (clojure.string/trim (first stats)) #"\s+"))))))
-        ;tsf (clj-time.format/unparse (clj-time.format/formatters :date-hour-minute-second) (clj-time.format/parse-local ts))
-        st (first (re-find #"\{(.*?)\}" (last stats)))  ; capture non-greedy everything inside {}
-        kv (re-seq #"([^=}{]+)=([^=}{]+)(?:,|$|}|\s+)" st) ; capture (any except ={) = () as kv pair seq
-        ; after reg capture, each entry has 3 ele, [k=v, k, v], extract k v
-        statmap (zipmap (map #(% 1) kv) (map #(-> % (nth 2) (->> (re-find #"\d+"))) kv))
-        elapsed (quot (read-string (re-find #"\d+" (get statmap "timeTaken"))) 64000)]    ; 64 threads
-    (prn "elapse time: " elapsed "successEvents:" (get statmap "successfulEventCount") (rest stats))
-    (println)
-    (assoc statmap :elapse elapsed :timestamp ts)))  ; ret the map
-    
+
+(defn query 
+  "query with the passed in query map"
+  ([time]
+    (query "dodger" "*" pp/pprint))
+
+  ([idxname query-clause process-fn]
+    (connect elasticserver elasticport)
+    (let [res (esd/search-all-types idxname ;esd/search-all-types idxname ;"logstash-2013.05.22"
+                :size 2
+                :query query-clause
+                :facets (date-hist-facet "datehist" "timestamp" "value" "10m")
+                :sort {"timestamp" {"order" "desc"}})
+          n (esrsp/total-hits res)
+          hits (esrsp/hits-from res)
+          fres (esrsp/facets-from res)]
+      (prn (format "Total hits: %d" n))
+      (process-fn hits)
+      (process-fn fres)
+      res)))   ; ret response
+
+
+(defn create-index-with-data 
+  "create dodger index with data file"
+  [idxname datfile]
+  (let [mapping-name "timevalue"
+        mappings (create-dodger-mapping-types mapping-name)]
+    (create-index idxname mappings)
+    (populate-dodger-data idxname mapping-name datfile)))
+    ;(query idxname "whatever" pp/pprint))
+
+
+(defn gen-feature
+  "generate a feature row data based on facet query for a particular time in event"
+  [idxname timestr backhours]
+  (let [query-clause (filtered-time-range "timestamp" timestr backhours)]
+    (prn "gen-feature for event at time " idxname timestr backhours)
+    (query idxname query-clause pp/pprint)))
+
+
+
+

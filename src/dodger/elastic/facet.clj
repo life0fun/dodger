@@ -2,7 +2,7 @@
 ; query with facet aggregations to perform statistics
 ;
 
-(ns logquery.elastic.facet
+(ns dodger.facet
   (:require [clojure.string :as str])
   (:require [clojure.java.jdbc :as sql])
   (:import [java.io FileReader]
@@ -16,11 +16,11 @@
             [clojure.pprint :as pp])
   (:require [clj-time.core :as clj-time :exclude [extend]]
             [clj-time.format])
-  (:require [logquery.incanter.plot :refer :all]))
+  (:require [dodger.incanter.plot :refer :all]))
 ;
 ; http://www.slideshare.net/clintongormley/terms-of-endearment-the-elasticsearch-query-dsl-explained
 ; curl -XGET 'http://cte-db3:9200/logstash-2013.05.22/_search?q=@type=finder_core_api
-; kibana curls to elastic on browser tools, jsconsole, network, then issue a search, check kibana section.
+; kibana curls to on browser tools, jsconsole, network, then issue a search, check kibana section.
 ; "curl -XGET http://localhost:9200/logstash-2013.05.23/_search?pretty -d ' 
 ; {"size": 100, 
 ;  "query": {
@@ -51,7 +51,7 @@
 (declare query-string-keyword)
 (declare process-record)
 (declare text-query-filter)
-(declare elastic-query)
+(declare query)
 
 (declare query-stats)
 (declare process-stats-hits)
@@ -89,9 +89,9 @@
     (q/filtered
       :query
         (q/query-string 
-          :default_field "@message"
+          :default_field "value"
           ;:query "@message:EmailAlertDigestEventHandlerStats AND @type:finder_core_application")
-          :query (str "@message:" keyword))
+          :query (str "value" keyword))
       :filter 
         {:range {"@timestamp" {:from prefmt   ;"2013-05-29T00:44:42"
                                :to nowfmt }}})))
@@ -113,7 +113,7 @@
     (hash-map name tmap)))
 
 
-(defn elastic-query [idxname keyword process-fn]
+(defn query [idxname keyword process-fn]
   ; if idxname is unknown, we can use search-all-indexes-and-types.
   ; query range to be 
   ;(with-esconn [elasticserver elasticport]
@@ -136,13 +136,13 @@
 
 (defn test-date-hist [idxname]
   (prn "test-date-hist : " idxname)
-  (elastic-query idxname "consumer" pp/pprint))
+  (query idxname "consumer" pp/pprint))
 
 
 
 (defn test-trigger-query [idxname]
   ;(test-query idxname (trigger-task-filter) prn))
-  (elastic-query idxname (text-query-filter) prn))
+  (query idxname (text-query-filter) prn))
 
 
 (defn trigger-task-filter []
@@ -167,7 +167,7 @@
 
 
 (defn query-stats [idxname]
-  (elastic-query idxname 
+  (query idxname 
                  (query-string-keyword "CNIContactUsageEventHandlerStats") 
                  process-stats-hits))
 
@@ -200,7 +200,7 @@
 
 ;; section for handling email query
 (defn query-email [idxname]
-  (elastic-query idxname 
+  (query idxname 
                  (query-string-keyword "EmailAlertDigestEventHandlerStats")
                  process-email-hits))
 

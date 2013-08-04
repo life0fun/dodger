@@ -1,5 +1,5 @@
 
-(ns logquery.incanter.plot
+(ns dodger.incanter.plot
   (:require [clojure.string :as str])
   (:require [clojure.java.jdbc :as sql])
   (:import [java.io FileReader]
