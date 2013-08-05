@@ -15,7 +15,8 @@
   (:require [clj-time.core :as clj-time :exclude [extend]]
             [clj-time.format :refer [parse unparse formatter]]
             [clj-time.coerce :refer [to-long from-long]])
-  (:require [dodger.incanter.plot :refer :all]))
+  (:require [dodger.incanter.plot :refer :all]
+            [dodger.vwfeature :refer :all]))
 ;
 ; http://www.slideshare.net/clintongormley/terms-of-endearment-the-elasticsearch-query-dsl-explained
 ; curl -XGET 'http://cte-db3:9200/logstash-2013.05.22/_search?q=@type=finder_core_api
@@ -127,10 +128,11 @@
         {:range {"timestamp" {:from prefmt   ;"2013-05-29T00:44:42"
                                :to nowfmt }}})))
 
-; ret a map that specifies date histogram query
+; ret a map that specifies date histogram query, specify key field and value_field.
 (defn date-hist-facet [name keyfield valfield interval]
-  "form a date histogram facets map, like {name : {date_histogram : {field: f}}}"
-  (let [qmap (hash-map "field" keyfield "interval" interval)]
+  "ret a date histogram facets map, like {name : {date_histogram : {field: f}}}"
+  (let [name (str name "-" interval)
+        qmap (hash-map "field" keyfield "interval" interval)]
     (if (nil? valfield)
       (hash-map name (hash-map "date_histogram" qmap))
       (hash-map name (hash-map "date_histogram" (assoc qmap "value_field" valfield))))))
@@ -139,32 +141,32 @@
 ; construct filtered query for time ranged query
 (defn filtered-time-range
   "filtered query with filter range on timestamp field from cur point back to n hours"
-  [field time-str back-hours]
-  (let [to (parse (formatter "MM/dd/yyyy HH:mm") time-str)
-        from (clj-time/minus to (clj-time/hours (read-string back-hours)))
+  [field timestr backhours] ; all args in string format
+  (let [to (parse (formatter "MM/dd/yyyy HH:mm") timestr)
+        from (clj-time/minus to (clj-time/hours (read-string backhours)))
         from-str (unparse (formatter "MM/dd/yyyy HH:mm") from)]
-    ;(q/range field :from from-str :to time-str)))
+    ;(q/range field :from from-str :to timestr)))
     (q/range field :from (to-long from) :to (to-long to))))
 
 
 (defn query 
-  "query with the passed in query map"
+  "query using the passed in query clause"
   ([time]
-    (query "dodger" "*" pp/pprint))
+    (query "dodger" "*" (date-hist-facet "datehist" "timestamp" "value" "10m") pp/pprint))
 
-  ([idxname query-clause process-fn]
+  ([idxname query-clause facet-clause process-fn]
     (connect elasticserver elasticport)
     (let [res (esd/search-all-types idxname ;esd/search-all-types idxname ;"logstash-2013.05.22"
                 :size 2
                 :query query-clause
-                :facets (date-hist-facet "datehist" "timestamp" "value" "10m")
+                :facets facet-clause
                 :sort {"timestamp" {"order" "desc"}})
           n (esrsp/total-hits res)
           hits (esrsp/hits-from res)
           fres (esrsp/facets-from res)]
       (prn (format "Total hits: %d" n))
       (process-fn hits)
-      (process-fn fres)
+      (process-fn (keys fres))
       res)))   ; ret response
 
 
@@ -178,12 +180,28 @@
     ;(query idxname "whatever" pp/pprint))
 
 
+; search with a list of facets
+(defn vm-facets
+  "generate vm feature using a list of date histogram facet query starting from time"
+  [idxname timestr backhours] 
+  (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
+        query-clause (filtered-time-range "timestamp" timestr backhours)
+        intervals ["5m" "10m" "30m" "1h"]  ; 4 buckets per hour
+        facet-ary (map (partial date-hist-facet (str "last-" backhours "-bucket") "timestamp" "value") intervals)
+        facet-map (reduce merge facet-ary)]  ; merge all facets query map
+    (prn "facet " (keys facet-map))
+    (query idxname query-clause facet-map pp/pprint)))
+  
+
 (defn gen-feature
   "generate a feature row data based on facet query for a particular time in event"
   [idxname timestr backhours]
-  (let [query-clause (filtered-time-range "timestamp" timestr backhours)]
+  (let [query-clause (filtered-time-range "timestamp" timestr backhours)
+        res (vm-facets idxname timestr backhours)
+        fpairs (vw-feature-data-format (esrsp/facets-from res))]
     (prn "gen-feature for event at time " idxname timestr backhours)
-    (query idxname query-clause pp/pprint)))
+    ;(query idxname query-clause pp/pprint)))
+    (prn "feature data :" fpairs)))
 
 
 
