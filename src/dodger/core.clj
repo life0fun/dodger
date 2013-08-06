@@ -38,12 +38,13 @@
         nxt-week (clj-time/plus now (clj-time/weeks 1))
         idxname (first args)
         time (second args)
-        backhours (last args)]
+        backhours (last args)
+        vmfeature (es/gen-feature idxname time backhours)]
     (prn "generate feature..." idxname time backhours)
-    (es/gen-feature idxname time backhours)))
+    (prn "gen feature : " vmfeature)))
 
 
-; generate feature 
+; feed with train data to generate model 
 (defn train [args]
   "train vw with the feature data"
   (let [now (clj-time.local/local-now)
@@ -57,7 +58,7 @@
         modelfile (second args)]
     (prn "train..." datfile modelfile)))
 
-; generate feature 
+; make prediction using model from training 
 (defn predict [args]
   "predict traffic with trained model"
   (let [now (clj-time.local/local-now)

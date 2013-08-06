@@ -110,6 +110,16 @@
         val))))
 
 
+(defn create-index-with-data 
+  "create dodger index with data file"
+  [idxname datfile]
+  (let [mapping-name "timevalue"
+        mappings (create-dodger-mapping-types mapping-name)]
+    (create-index idxname mappings)
+    (populate-dodger-data idxname mapping-name datfile)
+    idxname))
+
+
 (defn query-string-keyword [field keyword]
   "ret a query map with filtered clause"
   (let [now (clj-time/now) 
@@ -128,6 +138,7 @@
         {:range {"timestamp" {:from prefmt   ;"2013-05-29T00:44:42"
                                :to nowfmt }}})))
 
+
 ; ret a map that specifies date histogram query, specify key field and value_field.
 (defn date-hist-facet [name keyfield valfield interval]
   "ret a date histogram facets map, like {name : {date_histogram : {field: f}}}"
@@ -143,7 +154,7 @@
   "filtered query with filter range on timestamp field from cur point back to n hours"
   [field timestr backhours] ; all args in string format
   (let [to (parse (formatter "MM/dd/yyyy HH:mm") timestr)
-        from (clj-time/minus to (clj-time/hours (read-string backhours)))
+        from (clj-time/minus to (clj-time/hours backhours))
         from-str (unparse (formatter "MM/dd/yyyy HH:mm") from)]
     ;(q/range field :from from-str :to timestr)))
     (q/range field :from (to-long from) :to (to-long to))))
@@ -170,38 +181,48 @@
       res)))   ; ret response
 
 
-(defn create-index-with-data 
-  "create dodger index with data file"
-  [idxname datfile]
-  (let [mapping-name "timevalue"
-        mappings (create-dodger-mapping-types mapping-name)]
-    (create-index idxname mappings)
-    (populate-dodger-data idxname mapping-name datfile)))
-    ;(query idxname "whatever" pp/pprint))
-
-
 ; search with a list of facets
-(defn vm-facets
+(defn last-day-facets
   "generate vm feature using a list of date histogram facet query starting from time"
   [idxname timestr backhours] 
   (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
         query-clause (filtered-time-range "timestamp" timestr backhours)
         intervals ["5m" "10m" "30m" "1h"]  ; 4 buckets per hour
-        facet-ary (map (partial date-hist-facet (str "last-" backhours "-bucket") "timestamp" "value") intervals)
+        facet-ary (map (partial date-hist-facet (str "time-" backhours "h-bucket") "timestamp" "value") intervals)
         facet-map (reduce merge facet-ary)]  ; merge all facets query map
-    (prn "facet " (keys facet-map))
+    (prn "vm-facets : " (keys facet-map))
     (query idxname query-clause facet-map pp/pprint)))
   
+(defn last-week-facets
+  "generate vm feature using a list of date histogram facet query starting from time"
+  [idxname timestr backdays] 
+  (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
+        backhours (* 24 backdays)
+        query-clause (filtered-time-range "timestamp" timestr backhours)
+        intervals ["1h" "2h" "6h" "12h" "24h"]  ; 4 buckets per hour
+        facet-ary (map (partial date-hist-facet (str "time-" backdays "d-bucket") "timestamp" "value") intervals)
+        facet-map (reduce merge facet-ary)]  ; merge all facets query map
+    (prn "vm-facets : " (keys facet-map))
+    (query idxname query-clause facet-map pp/pprint)))
 
 (defn gen-feature
   "generate a feature row data based on facet query for a particular time in event"
   [idxname timestr backhours]
-  (let [query-clause (filtered-time-range "timestamp" timestr backhours)
-        res (vm-facets idxname timestr backhours)
-        fpairs (vw-feature-data-format (esrsp/facets-from res))]
-    (prn "gen-feature for event at time " idxname timestr backhours)
+  (let [row (str " |")
+        backhours (read-string backhours)
+        query-last-day-clause (filtered-time-range "timestamp" timestr backhours)
+        res (last-day-facets idxname timestr backhours)
+        feature-last-day (vw-feature-data-format (esrsp/facets-from res))
+        query-last-week-clause (filtered-time-range "timestamp" timestr (* 24 7))
+        res (last-week-facets idxname timestr 7)
+        feature-last-week (vw-feature-data-format (esrsp/facets-from res))
+        ]
+    ;(prn "gen-feature for event at time " idxname timestr backhours)
     ;(query idxname query-clause pp/pprint)))
-    (prn "feature data :" fpairs)))
+    ;(prn "feature data :" feature-last-week)
+    (-> row 
+        (str feature-last-day)
+        (str " | " feature-last-week))))
 
 
 
