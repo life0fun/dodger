@@ -14,17 +14,18 @@
 
 ; create index
 (defn create-index [args]
-  "create index for data, first arg is idxname, second arg is data file"
+  "create index dodger with data, first arg is data file"
   (let [now (clj-time.local/local-now)
         fns (map (fn [nm] (ns-resolve 'clj-time.core (symbol nm))) ["year" "month" "day"])
         datm (map (fn [f] (format "%02d" (f now))) fns)   ; clojure.core/format string
         nowidx (str "logstash-" (clojure.string/join "." datm))
         fmt-now (clj-time.format/unparse (clj-time.format/formatter "yyyy.MM.dd") now)
         nxt-week (clj-time/plus now (clj-time/weeks 1))
-        idxname (first args)
-        datfile (second args)]
-    (prn "create index with data..." idxname datfile)
-    (es/create-index-with-data idxname datfile)))
+        datfile (first args)]
+    (prn "create index with data..." datfile)
+    ;(es/delete-index es/dodger-index-name)
+    ;(es/create-index-dodger)
+    (es/populate-dodger-index datfile)))
 
 
 ; generate feature 
@@ -36,11 +37,10 @@
         nowidx (str "logstash-" (clojure.string/join "." datm))
         fmt-now (clj-time.format/unparse (clj-time.format/formatter "yyyy.MM.dd") now)
         nxt-week (clj-time/plus now (clj-time/weeks 1))
-        idxname (first args)
-        time (second args)
+        time (first args)
         backhours (last args)
-        vmfeature (es/gen-feature idxname time backhours)]
-    (prn "generate feature..." idxname time backhours)
+        vmfeature (es/gen-feature es/dodger-index-name time backhours)]
+    (prn "generate feature..." es/dodger-index-name time backhours)
     (prn "gen feature : " vmfeature)))
 
 

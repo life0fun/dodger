@@ -50,6 +50,10 @@
 
 (def time-range 1)    ; from now, how far back
 
+; index name that stores dodger data.
+(def dodger-index-name "dodgerstestc")  ; exports namespace global var.
+(def dodger-types-name "data")        ; exports dodger index mapping name
+
 ; forward declaration
 (declare text-query)
 (declare stats-query)
@@ -71,53 +75,72 @@
        (do ~@exprs))))
 
 
-; mapping types can be thought of as tables in a db(index)
-; mapping types defines how a field is analyzed, indexed so can be searched.
+; an index may store documents of different “mapping types”. 
+; mapping types can be thought of as column schemas of a table in a db(index)
+; each field has a mapping type. A mapping type defines how a field is analyzed, indexed so can be searched.
+; each index has one mapping type. index.my_type.my_field. Each (mapping)type can have many mapping definitions.
+; curl -XGET 'http://localhost:9200/dodgerstestc/data/_mapping?pretty=true'
 (defn create-dodger-mapping-types 
   "ret a mapping type for dodger data with timestamp and value fields"
   [mapping-name]
-  (let [name mapping-name
-        schema (hash-map :value {:type "integer" :store "yes"}
-                         :timestamp {:type "date" :format "MM/dd/yyyy HH:mm"})]
-    (hash-map name (hash-map :properties schema))))
+  (let [schema { :value     {:type "float" :store "yes"}
+                 :timestamp {:type "date" :format "MM/dd/yyyy HH:mm"}
+                 :baseballgame {:type "integer"}
+                 :prediction {:type "float"}
+                 :residual {:type "float"}
+                 :stdresidual {:type "float"}
+                 :rmse {:type "float"}
+                 :variance {:type "float"}
+                 :stddev {:type "float"}
+                 :mean {:type "float"} 
+                 }]
+    (hash-map mapping-name {:properties schema})))
 
+
+(defn delete-index
+  "delete an existing index by name"
+  [idxname]
+  (if (esi/exists? idxname)
+    (esi/delete idxname)))
+
+; document query takes index name, mapping name and query (as a Clojure map)
+; curl -s http://127.0.0.1:9200/_status?pretty=true, default has indices: { data : {} } 
+; each index has one mapping type. index.my_type.my_field.
+(defn create-index
+  "create index with the passing name and mapping types"
+  [idxname mappings]
+  (if-not (esi/exists? idxname)  ; create index only when does not exist
+    (esi/create idxname :mappings mappings)))
+
+
+; curl -XGET http://127.0.0.1:9200/dodgerstestc/_status?pretty=true
+; curl -XGET http://127.0.0.1:9200/dodgerstestc/data/1?pretty=true
+; curl -XDELETE 'http://localhost:9200/dodgerstestc/data/1
+(defn create-index-dodger
+  "create dodger index"
+  []
+  (let [mappings (create-dodger-mapping-types dodger-types-name)]
+    (create-index dodger-index-name mappings)))
+
+
+; input one document
 (defn create-dodger-doc
   "create a document for dodger mapping, :value and :timestamp fields"
   [value timestamp]
   (hash-map :value value :timestamp timestamp))
 
-; document query takes index name, mapping name and query (as a Clojure map)
-; curl -s http://127.0.0.1:9200/_status?pretty=true | grep logstash
-(defn create-index
-  "create index with mappings"
-  [idxname mappings]
-  (if (esi/exists? idxname)
-    (esi/delete idxname)
-    ;(prn (esi/get-settings idxname))
-    (esi/create idxname :mappings mappings)))
-
-
-(defn populate-dodger-data
-  "read data file line by line, and create document in es with fields"
-  [idxname mappings datfile]
-  ; transform file as line seq using clojure.java.io/reader
-  (prn "populating from datfile " datfile)
-  (with-open [rdr (reader datfile)]
-    (doseq [l (line-seq rdr)]
-      (let [[ts val] (clojure.string/split l #",")]
-        (prn ts val)
-        (esd/create idxname mappings (create-dodger-doc val ts))
-        val))))
-
-
-(defn create-index-with-data 
-  "create dodger index with data file"
-  [idxname datfile]
-  (let [mapping-name "timevalue"
-        mappings (create-dodger-mapping-types mapping-name)]
-    (create-index idxname mappings)
-    (populate-dodger-data idxname mapping-name datfile)
-    idxname))
+; we did not provide value for id field. so id will be hash-val.
+; curl -XGET 'http://localhost:9200/dodgerstestc/data/2PksRf_aQOK1YxkyzdgxwA?pretty=true'
+(defn populate-dodger-index
+  "populate dodgers index by reading line by line from data file"
+  [datfile]
+  (let [mapping (esi/get-mapping dodger-index-name dodger-types-name)]
+    (with-open [rdr (reader datfile)]
+      (doseq [l (line-seq rdr)]
+        (let [[ts val] (clojure.string/split l #",")]
+          (prn ts val)
+          (esd/create dodger-index-name dodger-types-name (create-dodger-doc val ts))
+          val)))))
 
 
 (defn query-string-keyword [field keyword]
@@ -137,6 +160,7 @@
       :filter 
         {:range {"timestamp" {:from prefmt   ;"2013-05-29T00:44:42"
                                :to nowfmt }}})))
+
 
 
 ; ret a map that specifies date histogram query, specify key field and value_field.
@@ -160,10 +184,11 @@
     (q/range field :from (to-long from) :to (to-long to))))
 
 
+; curl -XGET 'http://localhost:9200/dodgerstestc/_search?q=value:23'
 (defn query 
   "query using the passed in query clause"
   ([time]
-    (query "dodger" "*" (date-hist-facet "datehist" "timestamp" "value" "10m") pp/pprint))
+    (query dodger-index-name dodger-types-name (date-hist-facet "datehist" "timestamp" "value" "10m") pp/pprint))
 
   ([idxname query-clause facet-clause process-fn]
     (connect elasticserver elasticport)
@@ -192,7 +217,8 @@
         facet-map (reduce merge facet-ary)]  ; merge all facets query map
     (prn "vm-facets : " (keys facet-map))
     (query idxname query-clause facet-map pp/pprint)))
-  
+
+
 (defn last-week-facets
   "generate vm feature using a list of date histogram facet query starting from time"
   [idxname timestr backdays] 
@@ -205,10 +231,11 @@
     (prn "vm-facets : " (keys facet-map))
     (query idxname query-clause facet-map pp/pprint)))
 
+
 (defn gen-feature
   "generate a feature row data based on facet query for a particular time in event"
   [idxname timestr backhours]
-  (let [row (str " |")
+  (let [row (str " | ")
         backhours (read-string backhours)
         query-last-day-clause (filtered-time-range "timestamp" timestr backhours)
         res (last-day-facets idxname timestr backhours)

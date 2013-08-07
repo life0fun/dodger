@@ -1,7 +1,3 @@
-;
-; query with facet aggregations to perform statistics
-;
-
 (ns dodger.facet
   (:require [clojure.string :as str])
   (:require [clojure.java.jdbc :as sql])

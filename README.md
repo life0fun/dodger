@@ -30,8 +30,8 @@ Please download traffic and dodger event raw data from UCI machine learning repo
   
   lein compile
 
-  lein run index dodger data/train.data
+  lein-2 run index data/train.data
 
-  lein-2 run gen-feature dodger "9/28/2005 14:00" 2
+  lein-2 run gen-feature "9/28/2005 14:00" 2
 
   train predict plot
