@@ -34,4 +34,6 @@ Please download traffic and dodger event raw data from UCI machine learning repo
 
   lein-2 run gen-feature "9/28/2005 14:00" 2
 
+  lein-2 run train data/train.data data/Dodgers.events xx
+
   train predict plot

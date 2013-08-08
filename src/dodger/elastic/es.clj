@@ -50,8 +50,9 @@
 
 (def time-range 1)    ; from now, how far back
 
-; index name that stores dodger data.
-(def dodger-index-name "dodgerstestc")  ; exports namespace global var.
+; index name that stores dodger data and test result. two index have the same mapping
+(def dodger-data-index-name "dodgersdata")  ; exports namespace global var.
+(def dodger-test-index-name "dodgerstestc")
 (def dodger-types-name "data")        ; exports dodger index mapping name
 
 ; forward declaration
@@ -96,12 +97,13 @@
                  }]
     (hash-map mapping-name {:properties schema})))
 
-
+; curl -XDELETE 'http://localhost:9200/dodgerstestc
 (defn delete-index
   "delete an existing index by name"
   [idxname]
   (if (esi/exists? idxname)
     (esi/delete idxname)))
+
 
 ; document query takes index name, mapping name and query (as a Clojure map)
 ; curl -s http://127.0.0.1:9200/_status?pretty=true, default has indices: { data : {} } 
@@ -120,7 +122,8 @@
   "create dodger index"
   []
   (let [mappings (create-dodger-mapping-types dodger-types-name)]
-    (create-index dodger-index-name mappings)))
+    (create-index dodger-data-index-name mappings)  ; create and populate raw data index
+    (create-index dodger-test-index-name mappings)))
 
 
 ; input one document
@@ -131,15 +134,15 @@
 
 ; we did not provide value for id field. so id will be hash-val.
 ; curl -XGET 'http://localhost:9200/dodgerstestc/data/2PksRf_aQOK1YxkyzdgxwA?pretty=true'
-(defn populate-dodger-index
+(defn populate-dodger-data-index
   "populate dodgers index by reading line by line from data file"
   [datfile]
-  (let [mapping (esi/get-mapping dodger-index-name dodger-types-name)]
+  (let [mapping (esi/get-mapping dodger-data-index-name dodger-types-name)]
     (with-open [rdr (reader datfile)]
       (doseq [l (line-seq rdr)]
         (let [[ts val] (clojure.string/split l #",")]
           (prn ts val)
-          (esd/create dodger-index-name dodger-types-name (create-dodger-doc val ts))
+          (esd/create dodger-data-index-name dodger-types-name (create-dodger-doc val ts))
           val)))))
 
 
@@ -188,7 +191,7 @@
 (defn query 
   "query using the passed in query clause"
   ([time]
-    (query dodger-index-name dodger-types-name (date-hist-facet "datehist" "timestamp" "value" "10m") pp/pprint))
+    (query dodger-data-index-name dodger-types-name (date-hist-facet "datehist" "timestamp" "value" "10m") pp/pprint))
 
   ([idxname query-clause facet-clause process-fn]
     (connect elasticserver elasticport)
@@ -232,10 +235,11 @@
     (query idxname query-clause facet-map pp/pprint)))
 
 
+; gen vw feature row
 (defn gen-feature
   "generate a feature row data based on facet query for a particular time in event"
   [idxname timestr backhours]
-  (let [row (str " | ")
+  (let [row (str " |")
         backhours (read-string backhours)
         query-last-day-clause (filtered-time-range "timestamp" timestr backhours)
         res (last-day-facets idxname timestr backhours)
@@ -248,9 +252,17 @@
     ;(query idxname query-clause pp/pprint)))
     ;(prn "feature data :" feature-last-week)
     (-> row 
-        (str feature-last-day)
-        (str " | " feature-last-week))))
+      (str feature-last-day)
+      (str " |" feature-last-week))))
 
 
+; gen feature row data for each data point. label each data point from game event. 
+; all datapoint from [end-20m..end+2h] are labeled with 1
+(defn train-model
+  "generate vm feature row, label each datapoint with game event, and feed the gened
+  vm feature data to vm to train a model"
+  [datfile evtfile mdlfile]
+  (let [evtmap (create-event-timetab evtfile)]
+    (prn "event map " evtmap)))
 
 

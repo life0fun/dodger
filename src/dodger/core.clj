@@ -12,7 +12,7 @@
   (:gen-class :main true))
 
 
-; create index
+; populate raw data into index
 (defn create-index [args]
   "create index dodger with data, first arg is data file"
   (let [now (clj-time.local/local-now)
@@ -25,7 +25,7 @@
     (prn "create index with data..." datfile)
     ;(es/delete-index es/dodger-index-name)
     ;(es/create-index-dodger)
-    (es/populate-dodger-index datfile)))
+    (es/populate-dodger-data-index datfile)))
 
 
 ; generate feature 
@@ -39,8 +39,8 @@
         nxt-week (clj-time/plus now (clj-time/weeks 1))
         time (first args)
         backhours (last args)
-        vmfeature (es/gen-feature es/dodger-index-name time backhours)]
-    (prn "generate feature..." es/dodger-index-name time backhours)
+        vmfeature (es/gen-feature es/dodger-data-index-name time backhours)]
+    (prn "generate feature..." es/dodger-data-index-name time backhours)
     (prn "gen feature : " vmfeature)))
 
 
@@ -55,8 +55,10 @@
         nxt-week (clj-time/plus now (clj-time/weeks 1))
         idxname (or args nowidx)
         datfile (first args)
-        modelfile (second args)]
-    (prn "train..." datfile modelfile)))
+        evtfile (second args)
+        mdlfile (last args)]
+    (prn "train model with..." datfile evtfile mdlfile)
+    (es/train-model datfile evtfile mdlfile)))
 
 ; make prediction using model from training 
 (defn predict [args]

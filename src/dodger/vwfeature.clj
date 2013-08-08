@@ -1,14 +1,16 @@
 (ns dodger.vwfeature
-  (:require [clojure.string :as str])
-  (:require [clojure.java.jdbc :as sql])
   (:import  [java.lang.Math]
             [java.io FileReader]
             [java.util Map Map$Entry List ArrayList Collection Iterator HashMap])
+  (:require [clojure.string :as str]
+            [clojure.data.json :as json]
+            [clojure.pprint :as pp]
+            [clojure.java.io :only [reader] :refer [reader]]
+            [clojure.java.jdbc :as sql])
   (:require [clj-redis.client :as redis])    ; bring in redis namespace
-  (:require [clojure.data.json :as json])
-  (:require [clojure.pprint :as pp])
   (:require [clj-time.core :as clj-time :exclude [extend]]
-            [clj-time.format])
+            [clj-time.format :refer [parse unparse formatter]]
+            [clj-time.coerce :refer [to-long from-long]])
   (:require [dodger.incanter.plot :refer :all]))
 
 ;
@@ -97,3 +99,28 @@
               entries (:entries (bkt facets-data))
               bktvalstats (bucket-vals-stats (name bkt) entries)] ; each bucket gen a feature string
           (recur (next buckets) (conj bktsfeatures bktvalstats)))))))
+
+
+; read event data, populate a event lookup map with
+; {event-endtime {:end end-time :attendance 1000}}
+(defn create-event-timetab
+  "create event lookup timetable with event file"
+  [evtfile]
+  (with-open [rdr (reader evtfile)]
+    (loop [evts (line-seq rdr) evtmap {}]
+      (if (empty? evts)
+        evtmap
+        (let [e (first evts)
+              fields (clojure.string/split e #",")
+              [mdy etime attend] (map (partial nth fields) [0 2 3])
+              endtime (parse (formatter "MM/dd/yy HH:mm:ss") (str mdy " " etime))
+              endtime-20m (clj-time/minus endtime (clj-time/minutes 20))
+              endtime+2h (clj-time/plus endtime (clj-time/hours 2))
+              tbentry (hash-map (to-long endtime-20m) 
+                                {:end (to-long endtime+2h) 
+                                 :attendance attend})]
+          (recur (rest evts) (merge evtmap tbentry)))))))
+
+; format dategeneral namespace features
+
+              
