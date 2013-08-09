@@ -132,6 +132,7 @@
   [value timestamp]
   (hash-map :value value :timestamp timestamp))
 
+
 ; we did not provide value for id field. so id will be hash-val.
 ; curl -XGET 'http://localhost:9200/dodgerstestc/data/2PksRf_aQOK1YxkyzdgxwA?pretty=true'
 (defn populate-dodger-data-index
@@ -212,7 +213,7 @@
 ; search with a list of facets
 (defn last-day-facets
   "generate vm feature using a list of date histogram facet query starting from time"
-  [idxname timestr backhours] 
+  [idxname timestr backhours] ; time-str "9/28/2005 20:55"
   (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
         query-clause (filtered-time-range "timestamp" timestr backhours)
         intervals ["5m" "10m" "30m" "1h"]  ; 4 buckets per hour
@@ -224,7 +225,7 @@
 
 (defn last-week-facets
   "generate vm feature using a list of date histogram facet query starting from time"
-  [idxname timestr backdays] 
+  [idxname timestr backdays] ; time-str "9/28/2005 20:55"
   (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
         backhours (* 24 backdays)
         query-clause (filtered-time-range "timestamp" timestr backhours)
@@ -237,8 +238,8 @@
 
 ; gen vw feature row
 (defn gen-feature
-  "generate a feature row data based on facet query for a particular time in event"
-  [idxname timestr backhours]
+  "generate feature row data based on facet query for a particular time in event"
+  [idxname timestr backhours]  ; time str "9/28/2005 20:55"
   (let [row (str " |")
         backhours (read-string backhours)
         query-last-day-clause (filtered-time-range "timestamp" timestr backhours)
@@ -263,6 +264,12 @@
   vm feature data to vm to train a model"
   [datfile evtfile mdlfile]
   (let [evtmap (create-event-timetab evtfile)]
-    (prn "event map " evtmap)))
+    (with-open [rdr (reader datfile)]
+      (loop [datpts (line-seq rdr) ingame 0]
+        (if empty? datpts)
+          evtmap   ; what to ret
+          (let [dat (first datpts)]
+            
+    
 
 

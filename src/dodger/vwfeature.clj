@@ -121,6 +121,42 @@
                                  :attendance attend})]
           (recur (rest evts) (merge evtmap tbentry)))))))
 
-; format dategeneral namespace features
+
+; format dategeneral namespace features, ret a vw feature row str
+;"1375963200000|dategeneral date_year:2013 date_year_2013:1
+(defn date-general-feature-ns
+  "format namespace dategeneral at time, ret a vw feature row str "
+  [timestr]
+  (letfn [(tmfeature [[tmvar tmsymb]]  ; pass in var and var symbol pair
+            (vector (str "date_" tmsymb ":" tmvar " date_" tmsymb "_" tmvar ":1 ")))]
+    (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
+          year (clj-time/year tm)
+          month (clj-time/month tm)
+          day (clj-time/day tm)
+          dayweek (clj-time/day-of-week tm)
+          weekyear (int (/ (+ (* 30 month) day) 7))   ; off, but ok
+          dayyear (+ (* 30 month) day)
+          monthyear month
+          hour (clj-time/hour tm)
+          minute (clj-time/minute tm)
+          featurenames [[year (quote year)]
+                        [month (quote month)]
+                        [day (quote day)]
+                        [dayweek (quote dayweek)]
+                        [weekyear (quote weekyear)]
+                        [dayyear (quote dayyear)]
+                        [monthyear (quote monthyear)]
+                        [hour (quote hour)]
+                        [minute (quote minute)]]
+          feature-str (clojure.string/join (mapcat tmfeature featurenames))]
+      ;(prn feature-str)
+      (str (to-long tm) "|dategeneral " feature-str))))
+
+
+; label vw feature row at time MM/dd/yyyy HH:mm as 1 if within game event end time.
+(defn label-datapoint
+  "; label vw feature row at time MM/dd/yyyy HH:mm as 1 if within game event end time"
+
+
 
               
