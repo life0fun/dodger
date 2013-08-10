@@ -23,8 +23,9 @@
         nxt-week (clj-time/plus now (clj-time/weeks 1))
         datfile (first args)]
     (prn "create index with data..." datfile)
-    ;(es/delete-index es/dodger-index-name)
-    ;(es/create-index-dodger)
+    ; (es/delete-index es/dodger-data-index-name)
+    ; (es/delete-index es/dodger-test-index-name)
+    ; (es/create-index-dodger)
     (es/populate-dodger-data-index datfile)))
 
 
@@ -37,10 +38,10 @@
         nowidx (str "logstash-" (clojure.string/join "." datm))
         fmt-now (clj-time.format/unparse (clj-time.format/formatter "yyyy.MM.dd") now)
         nxt-week (clj-time/plus now (clj-time/weeks 1))
-        time (first args)
-        backhours (last args)
-        vmfeature (es/gen-feature es/dodger-data-index-name time backhours)]
-    (prn "generate feature..." es/dodger-data-index-name time backhours)
+        timestr (first args) ; gen feature for time data-point
+        ;backhours (read-string (last args))
+        vmfeature (es/gen-feature es/dodger-data-index-name timestr 24)] ; back 24 hour
+    (prn "generate feature..." es/dodger-data-index-name timestr)
     (prn "gen feature : " vmfeature)))
 
 
@@ -96,8 +97,11 @@
 (defn -main [& args]
   (prn " >>>> elasticsearch to generate feature data for machine learning <<<<< ")
   (case (first args)
+    ; lein-2 run index data/train.data
     "index" (create-index (rest args))
-    "gen-feature"  (gen-feature (rest args))
+    ; lein-2 run gen-feature data/train.data data/Dodgers.events xx
+    "gen-feature"  (gen-feature (rest args)) 
+    ; lein-2 run train data/train.data data/Dodgers.events output.model
     "train" (train (rest args))
     "predict" (predict (rest args))
     "plot" (plot (rest args))

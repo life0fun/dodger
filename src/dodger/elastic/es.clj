@@ -115,9 +115,9 @@
     (esi/create idxname :mappings mappings)))
 
 
-; curl -XGET http://127.0.0.1:9200/dodgerstestc/_status?pretty=true
-; curl -XGET http://127.0.0.1:9200/dodgerstestc/data/1?pretty=true
-; curl -XDELETE 'http://localhost:9200/dodgerstestc/data/1
+; curl -XGET http://127.0.0.1:9200/dodgersdata/_status?pretty=true
+; curl -XGET http://127.0.0.1:9200/dodgersdata/data/1?pretty=true
+; curl -XDELETE 'http://localhost:9200/dodgersdata/data/1
 (defn create-index-dodger
   "create dodger index"
   []
@@ -205,8 +205,8 @@
           hits (esrsp/hits-from res)
           fres (esrsp/facets-from res)]
       (prn (format "Total hits: %d" n))
-      (process-fn hits)
-      (process-fn (keys fres))
+      ;(process-fn hits)
+      ;(process-fn (keys fres))
       res)))   ; ret response
 
 
@@ -236,23 +236,23 @@
     (query idxname query-clause facet-map pp/pprint)))
 
 
-; gen vw feature row
+; gen vw feature row for a time datapoint, combine last day namespace and last week
 (defn gen-feature
   "generate feature row data based on facet query for a particular time in event"
   [idxname timestr backhours]  ; time str "9/28/2005 20:55"
-  (let [row (str " |")
-        backhours (read-string backhours)
+  (let [; first, get last day's feature data
+        backhours 24       
         query-last-day-clause (filtered-time-range "timestamp" timestr backhours)
         res (last-day-facets idxname timestr backhours)
         feature-last-day (vw-feature-data-format (esrsp/facets-from res))
+        ; now get last week's feature data 
         query-last-week-clause (filtered-time-range "timestamp" timestr (* 24 7))
         res (last-week-facets idxname timestr 7)
-        feature-last-week (vw-feature-data-format (esrsp/facets-from res))
-        ]
+        feature-last-week (vw-feature-data-format (esrsp/facets-from res))]
     ;(prn "gen-feature for event at time " idxname timestr backhours)
     ;(query idxname query-clause pp/pprint)))
     ;(prn "feature data :" feature-last-week)
-    (-> row 
+    (-> (str " |")
       (str feature-last-day)
       (str " |" feature-last-week))))
 
@@ -263,13 +263,39 @@
   "generate vm feature row, label each datapoint with game event, and feed the gened
   vm feature data to vm to train a model"
   [datfile evtfile mdlfile]
-  (let [evtmap (create-event-timetab evtfile)]
+  (let [evtmap (create-event-timetab evtfile)
+        maxattend (read-string (:attendance (last (sort-by :attendance (vals evtmap)))))] ; max attendence
     (with-open [rdr (reader datfile)]
-      (loop [datpts (line-seq rdr) ingame 0]
-        (if empty? datpts)
-          evtmap   ; what to ret
-          (let [dat (first datpts)]
+      ; loop with binding of evtmap ts key if currently in game time
+      (loop [datpts (line-seq rdr) ingame 0 evtmapts 0 idx 0] ; now loop thru each data point
+        (if (empty? datpts)
+          (prn "done all datapoint.." idx) ;evtmap   ; whatever to ret
+          (let [[ts-str value] (clojure.string/split (first datpts) #",")
+                ts (parse (formatter "MM/dd/yyyy HH:mm") ts-str)
+                
+                gametm? (evtmap (to-long ts))
+                evtmapts (if gametm? (to-long ts) evtmapts) ; rebind to cur ts
+                gameend? (and ingame (> (to-long ts) evtmapts)) ; ingame and exceed end+2h
+                ingame (or gametm? (not gameend?))
+                
+                date-general (date-general-feature ts-str)
+                vwfeature (gen-feature dodger-data-index-name ts-str 24)
+                out (str date-general vwfeature)
+                
+                cars (float (/ (read-string value) 100)) ; car # as real-valued classification
+                outreal (str cars out)
+                attend (if (zero? evtmapts) 0 (read-string (:attendance (evtmap evtmapts))))
+                wt (if ingame (float (/ attend maxattend)) "0.01")
+                outbinary (str (if ingame 1 0) " " wt out)
+                ]
+            (prn "......." idx)
+            (prn ts-str ingame outbinary)
+            (recur (next datpts) ingame evtmapts (inc idx))))))))
             
+
+
+                
+
     
 
 

@@ -101,10 +101,10 @@
           (recur (next buckets) (conj bktsfeatures bktvalstats)))))))
 
 
-; read event data, populate a event lookup map with
+; read event data, populate a event lookup map keyed with event end-time in long
 ; {event-endtime {:end end-time :attendance 1000}}
 (defn create-event-timetab
-  "create event lookup timetable with event file"
+  "create event map keyed with event time(long) with event file"
   [evtfile]
   (with-open [rdr (reader evtfile)]
     (loop [evts (line-seq rdr) evtmap {}]
@@ -116,6 +116,7 @@
               endtime (parse (formatter "MM/dd/yy HH:mm:ss") (str mdy " " etime))
               endtime-20m (clj-time/minus endtime (clj-time/minutes 20))
               endtime+2h (clj-time/plus endtime (clj-time/hours 2))
+              ; evt map keyed with evt time in long
               tbentry (hash-map (to-long endtime-20m) 
                                 {:end (to-long endtime+2h) 
                                  :attendance attend})]
@@ -124,7 +125,7 @@
 
 ; format dategeneral namespace features, ret a vw feature row str
 ;"1375963200000|dategeneral date_year:2013 date_year_2013:1
-(defn date-general-feature-ns
+(defn date-general-feature
   "format namespace dategeneral at time, ret a vw feature row str "
   [timestr]
   (letfn [(tmfeature [[tmvar tmsymb]]  ; pass in var and var symbol pair
@@ -155,7 +156,11 @@
 
 ; label vw feature row at time MM/dd/yyyy HH:mm as 1 if within game event end time.
 (defn label-datapoint
-  "; label vw feature row at time MM/dd/yyyy HH:mm as 1 if within game event end time"
+  "label vw feature row at time MM/dd/yyyy HH:mm as 1 if within game event end time"
+  [time-str evtmap]
+  (let []
+    (prn "label data point " time-str)))
+
 
 
 
