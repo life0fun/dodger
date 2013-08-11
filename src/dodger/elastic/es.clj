@@ -5,7 +5,7 @@
            [java.util Map Map$Entry List ArrayList Collection Iterator HashMap])
   (:require [clj-redis.client :as redis])    ; bring in redis namespace
   (:require [clojure.data.json :as json]
-            [clojure.java.io :only [reader] :refer [reader]])
+            [clojure.java.io :only [reader writer] :refer [reader writer]])
   (:require [clojurewerkz.elastisch.rest          :as esr]
             [clojurewerkz.elastisch.rest.document :as esd]
             [clojurewerkz.elastisch.rest.index    :as esi]
@@ -15,8 +15,8 @@
   (:require [clj-time.core :as clj-time :exclude [extend]]
             [clj-time.format :refer [parse unparse formatter]]
             [clj-time.coerce :refer [to-long from-long]])
-  (:require [dodger.incanter.plot :refer :all]
-            [dodger.vwfeature :refer :all]))
+  (:require [dodger.incanter.plot :refer :all]))
+            ;[dodger.vwfeature :refer :all]))
 ;
 ; http://www.slideshare.net/clintongormley/terms-of-endearment-the-elasticsearch-query-dsl-explained
 ; curl -XGET 'http://cte-db3:9200/logstash-2013.05.22/_search?q=@type=finder_core_api
@@ -42,17 +42,24 @@
 ; always use (formatters :data-time) formatter.
 ;
 
+; use https://chrome.google.com/webstore/detail/sense/doinijnbnggojdlcjifpdckfokbbfpbo
+; curl localhost:9200/_stats?pretty=true
+; curl -XDELETE localhost:9200/dodgerstest
+; curl -XGET localhost:9200/dodgersdata/_count?
+; curl -XGET localhost:9200/dodgersdata/data/_mapping?
+; curl -XPOST localhost:9200/dodgersdata/_optimize?only_expunge_deletes=true
+
+
+
 ; globals
 (def ^:dynamic *es-conn*)
 
 (def elasticserver "localhost")
 (def elasticport 9200)
 
-(def time-range 1)    ; from now, how far back
-
 ; index name that stores dodger data and test result. two index have the same mapping
 (def dodger-data-index-name "dodgersdata")  ; exports namespace global var.
-(def dodger-test-index-name "dodgerstestc")
+(def dodger-test-index-name "dodgerstest")
 (def dodger-types-name "data")        ; exports dodger index mapping name
 
 ; forward declaration
@@ -80,7 +87,7 @@
 ; mapping types can be thought of as column schemas of a table in a db(index)
 ; each field has a mapping type. A mapping type defines how a field is analyzed, indexed so can be searched.
 ; each index has one mapping type. index.my_type.my_field. Each (mapping)type can have many mapping definitions.
-; curl -XGET 'http://localhost:9200/dodgerstestc/data/_mapping?pretty=true'
+; curl -XGET localhost:9200/dodgersdata/data/_mapping?pretty=true
 (defn create-dodger-mapping-types 
   "ret a mapping type for dodger data with timestamp and value fields"
   [mapping-name]
@@ -134,7 +141,7 @@
 
 
 ; we did not provide value for id field. so id will be hash-val.
-; curl -XGET 'http://localhost:9200/dodgerstestc/data/2PksRf_aQOK1YxkyzdgxwA?pretty=true'
+; curl -XGET 'http://localhost:9200/dodgersdata/data/2PksRf_aQOK1YxkyzdgxwA?pretty=true'
 (defn populate-dodger-data-index
   "populate dodgers index by reading line by line from data file"
   [datfile]
@@ -150,7 +157,6 @@
 (defn query-string-keyword [field keyword]
   "ret a query map with filtered clause"
   (let [now (clj-time/now) 
-        ;pre (clj-time/minus now (clj-time/days time-range))  ; from now back 2 days
         pre (clj-time/minus now (clj-time/hours 20))  ; from now back 1 days
         nowfmt (clj-time.format/unparse (clj-time.format/formatters :date-time) now)
         prefmt (clj-time.format/unparse (clj-time.format/formatters :date-time) pre)]
@@ -166,15 +172,14 @@
                                :to nowfmt }}})))
 
 
-
 ; ret a map that specifies date histogram query, specify key field and value_field.
-(defn date-hist-facet [name keyfield valfield interval]
+(defn date-hist-facet [hname keyfield valfield interval]
   "ret a date histogram facets map, like {name : {date_histogram : {field: f}}}"
-  (let [name (str name "-" interval)
+  (let [histname hname
         qmap (hash-map "field" keyfield "interval" interval)]
     (if (nil? valfield)
-      (hash-map name (hash-map "date_histogram" qmap))
-      (hash-map name (hash-map "date_histogram" (assoc qmap "value_field" valfield))))))
+      (hash-map histname (hash-map "date_histogram" qmap))
+      (hash-map histname (hash-map "date_histogram" (assoc qmap "value_field" valfield))))))
 
 
 ; construct filtered query for time ranged query
@@ -204,93 +209,45 @@
           n (esrsp/total-hits res)
           hits (esrsp/hits-from res)
           fres (esrsp/facets-from res)]
-      (prn (format "Total hits: %d" n))
+      (prn (format "Total hits: %d " n " query " query-clause))
       ;(process-fn hits)
       ;(process-fn (keys fres))
       res)))   ; ret response
 
 
-; search with a list of facets
-(defn last-day-facets
-  "generate vm feature using a list of date histogram facet query starting from time"
+; date histgram facet query clause for last hours with interval buckets 5,10,30,1h
+(defn facet-query-hours
+  " date histgram facet query clause for last hours with interval buckets 5,10,30,1h"
   [idxname timestr backhours] ; time-str "9/28/2005 20:55"
   (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
         query-clause (filtered-time-range "timestamp" timestr backhours)
-        intervals ["5m" "10m" "30m" "1h"]  ; 4 buckets per hour
-        facet-ary (map (partial date-hist-facet (str "time-" backhours "h-bucket") "timestamp" "value") intervals)
-        facet-map (reduce merge facet-ary)]  ; merge all facets query map
+        intervals ["5m" "10m" "30m" "1h"]  ; tuples bucketed(group-by) every 5m, 10m 30m 1h.
+        ;facet-ary (map (partial date-hist-facet (str "time-" backhours "h-bucket") "timestamp" "value") intervals)
+        facet-ary (map (fn [b] (date-hist-facet (str "time_" backhours "h_" b "_bucket") "timestamp" "value" b)) intervals)
+        facet-map (reduce merge facet-ary) ; merge all facets query map
+        res (query idxname query-clause facet-map pp/pprint)]  
     (prn "vm-facets : " (keys facet-map))
-    (query idxname query-clause facet-map pp/pprint)))
+    (esrsp/facets-from res)))
 
 
-(defn last-week-facets
-  "generate vm feature using a list of date histogram facet query starting from time"
+; date histgram facet query clause for last days with interval buckets 1 2 6 12 24h
+(defn facet-query-days
+  "date histgram facet query for last days with interval buckets 1 2 6 12 24h"
   [idxname timestr backdays] ; time-str "9/28/2005 20:55"
   (let [tm (parse (formatter "MM/dd/yyyy HH:mm") timestr)
         backhours (* 24 backdays)
         query-clause (filtered-time-range "timestamp" timestr backhours)
-        intervals ["1h" "2h" "6h" "12h" "24h"]  ; 4 buckets per hour
-        facet-ary (map (partial date-hist-facet (str "time-" backdays "d-bucket") "timestamp" "value") intervals)
-        facet-map (reduce merge facet-ary)]  ; merge all facets query map
+        intervals ["1h" "2h" "6h" "12h" "24h"]  ; tuples buckted(group-by) 1h, 2h, ..
+        ;facet-ary (map (partial date-hist-facet (str "time-" backdays "d-bucket") "timestamp" "value") intervals)
+        facet-ary (map (fn [b] (date-hist-facet (str "time_" backdays "d_" b "_bucket") "timestamp" "value" b)) intervals)
+        facet-map (reduce merge facet-ary) ; merge all facets query map
+        res (query idxname query-clause facet-map pp/pprint)]  
     (prn "vm-facets : " (keys facet-map))
-    (query idxname query-clause facet-map pp/pprint)))
+    (esrsp/facets-from res)))
 
 
-; gen vw feature row for a time datapoint, combine last day namespace and last week
-(defn gen-feature
-  "generate feature row data based on facet query for a particular time in event"
-  [idxname timestr backhours]  ; time str "9/28/2005 20:55"
-  (let [; first, get last day's feature data
-        backhours 24       
-        query-last-day-clause (filtered-time-range "timestamp" timestr backhours)
-        res (last-day-facets idxname timestr backhours)
-        feature-last-day (vw-feature-data-format (esrsp/facets-from res))
-        ; now get last week's feature data 
-        query-last-week-clause (filtered-time-range "timestamp" timestr (* 24 7))
-        res (last-week-facets idxname timestr 7)
-        feature-last-week (vw-feature-data-format (esrsp/facets-from res))]
-    ;(prn "gen-feature for event at time " idxname timestr backhours)
-    ;(query idxname query-clause pp/pprint)))
-    ;(prn "feature data :" feature-last-week)
-    (-> (str " |")
-      (str feature-last-day)
-      (str " |" feature-last-week))))
 
 
-; gen feature row data for each data point. label each data point from game event. 
-; all datapoint from [end-20m..end+2h] are labeled with 1
-(defn train-model
-  "generate vm feature row, label each datapoint with game event, and feed the gened
-  vm feature data to vm to train a model"
-  [datfile evtfile mdlfile]
-  (let [evtmap (create-event-timetab evtfile)
-        maxattend (read-string (:attendance (last (sort-by :attendance (vals evtmap)))))] ; max attendence
-    (with-open [rdr (reader datfile)]
-      ; loop with binding of evtmap ts key if currently in game time
-      (loop [datpts (line-seq rdr) ingame 0 evtmapts 0 idx 0] ; now loop thru each data point
-        (if (empty? datpts)
-          (prn "done all datapoint.." idx) ;evtmap   ; whatever to ret
-          (let [[ts-str value] (clojure.string/split (first datpts) #",")
-                ts (parse (formatter "MM/dd/yyyy HH:mm") ts-str)
-                
-                gametm? (evtmap (to-long ts))
-                evtmapts (if gametm? (to-long ts) evtmapts) ; rebind to cur ts
-                gameend? (and ingame (> (to-long ts) evtmapts)) ; ingame and exceed end+2h
-                ingame (or gametm? (not gameend?))
-                
-                date-general (date-general-feature ts-str)
-                vwfeature (gen-feature dodger-data-index-name ts-str 24)
-                out (str date-general vwfeature)
-                
-                cars (float (/ (read-string value) 100)) ; car # as real-valued classification
-                outreal (str cars out)
-                attend (if (zero? evtmapts) 0 (read-string (:attendance (evtmap evtmapts))))
-                wt (if ingame (float (/ attend maxattend)) "0.01")
-                outbinary (str (if ingame 1 0) " " wt out)
-                ]
-            (prn "......." idx)
-            (prn ts-str ingame outbinary)
-            (recur (next datpts) ingame evtmapts (inc idx))))))))
             
 
 
