@@ -37,3 +37,20 @@ Please download traffic and dodger event raw data from UCI machine learning repo
   lein-2 run train data/train.data data/Dodgers.events output.model
 
   train predict plot
+
+## Vowpal Wabbit
+  1. generate data model with train data.
+    -b [ --bit_precision ] arg  number of bits in the feature table
+    increase to reduce collisions from hashing
+    ./vw -d data/train.real -b 21 -c -f model.real
+
+  2. fire up VW in deamon mode with data model, and stream data to it.
+    ./vw --daemon --num_children 10 -i model.real
+
+  3. feature generation
+    Throw a ton of features to the model and let L1 sparsity to figure it out.
+
+    Feature representation is a crucial machine learning design decision. 
+    They cast a very wide net in terms of representing an ad including words and topics used in the ad, links to and from the ad landing page, information about the advertiser, and more. Ultimately they rely on strong L1 regularization to enforce sparsity and uncover a limited number of truly relevant features.
+
+  
